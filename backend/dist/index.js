@@ -34,24 +34,21 @@ app.get("/health", function (_req, res) {
 });
 app.post("/wards", async function (req, res) {
     const { name } = req.body;
-    if (!name)
+    if (typeof name !== "string")
         return res.status(400).json({
             error: "Name is required"
         });
+    const wardExist = await pool.query("SELECT $1 from wards WHERE name = $1", [name]);
+    if (wardExist)
+        return res.status(409).json({
+            error: `${name} already exists.`
+        });
     const { rows } = await pool.query("INSERT INTO wards (name) VALUES ($1) RETURNING *", [name]);
-    res.status(201).json(rows[0]);
+    return res.status(201).json(rows[0]);
 });
 app.get("/wards", async function (_req, res) {
-    try {
-        const { rows } = await pool.query("SELECT * FROM wards ORDER BY name");
-        res.json(rows);
-    }
-    catch (error) {
-        console.error("Error while fetching data: ", error);
-        res.status(500).json({
-            error: "Failed to fetch data."
-        });
-    }
+    const { rows } = await pool.query("SELECT * FROM wards ORDER BY name");
+    res.json(rows);
 });
 app.post("/wards/:wardId/beds", async function (req, res) {
     const { label } = req.body;
@@ -60,11 +57,24 @@ app.post("/wards/:wardId/beds", async function (req, res) {
             error: "label is required"
         });
     const { rows } = await pool.query("INSERT INTO beds (ward_id, label) VALUES ($1, $2) RETURNING *", [req.params.wardId, label]);
-    res.status(200).json(rows[0]);
+    res.status(201).json(rows[0]);
 });
 app.get("/wards/:wardId/beds", async function (req, res) {
-    const { rows } = await pool.query("SELECT * FROM beds WHERE ward_id = $1 ORDER by label", [req.params.wardId]);
-    res.json(rows);
+    const { wardId } = req.params;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(wardId)) {
+        return res.status(404).json({
+            error: 'Invalid ward id'
+        });
+    }
+    const wardExist = await pool.query("SELECT name from wards WHERE id = $1", [wardId]);
+    if (wardExist.rows.length === 0) {
+        return res.status(404).json({
+            error: 'Ward with current id does not exists found'
+        });
+    }
+    const { rows } = await pool.query("SELECT * FROM beds WHERE ward_id = $1 ORDER by label", [wardId]);
+    return res.status(200).json(rows);
 });
 app.patch("/beds/:id/status", async function (req, res) {
     const { status, updatedBy } = req.body;
@@ -78,6 +88,7 @@ app.patch("/beds/:id/status", async function (req, res) {
         SET status = $1, updated_by = $2, updated_at = $3, version = version + 1
         WHERE id = $4
         RETURNING *`, [status, updatedBy ?? null, updated_at, req.params.id]);
+    return res.status(200).json(rows[0]);
 });
 app.listen(3000, function () {
     console.log("Server running on port 3000");
