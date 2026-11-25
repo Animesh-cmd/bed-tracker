@@ -1,10 +1,9 @@
 import express from "express"
 import pg from "pg"
+import { STATUS } from "./status.js";
 const app = express();
 
 app.use(express.json());
-
-const STATUS = ['available', 'occupied', 'maintenance', 'reserved'];
 
 const pool = new pg.Pool({
     host: "localhost",
@@ -14,6 +13,9 @@ const pool = new pg.Pool({
     database: "bedtracker",
     connectionTimeoutMillis: 3000
 });
+
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 
 async function main() {
     try {
@@ -48,11 +50,11 @@ app.post("/wards", async function (req, res) {
     });
     
     const wardExist = await pool.query(
-        "SELECT $1 from wards WHERE name = $1", [name]
+        "SELECT id from wards WHERE name = $1", [name]
     );
     
-    if(wardExist) return res.status(409).json({
-        error: `${name} already exists.`
+    if(wardExist.rowCount == 1) return res.status(409).json({
+        error: `${name} of id : ${wardExist.rows[0].id} already exists.`
     })
 
     const {rows} = await pool.query(
@@ -89,10 +91,8 @@ app.post("/wards/:wardId/beds", async function (req, res) {
 app.get("/wards/:wardId/beds", async function (req, res) {
     const { wardId } = req.params;
 
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
     if (!uuidRegex.test(wardId)){
-        return res.status(404).json({
+        return res.status(400).json({
         error: 'Invalid ward id'
       });
     }
@@ -118,6 +118,21 @@ app.get("/wards/:wardId/beds", async function (req, res) {
 
 app.patch("/beds/:id/status", async function(req, res) {
     const { status, updatedBy} = req.body;
+    const bedId = req.params.id;
+    
+    if (!uuidRegex.test(bedId)){
+        return res.status(400).json({
+        error: 'Invalid input syntax bed id'
+      });
+    }
+
+    const bedExistence = await pool.query("SELECT * FROM beds WHERE id = $1", [bedId]);
+
+    if(bedExistence.rows.length != 1)
+        return res.status(404).json({
+            error: "Bed doesn't exists."
+        });
+
     if(!STATUS.includes(status))
         return res.status(400).json({
             error: `status must be one of ${STATUS}`
@@ -131,7 +146,7 @@ app.patch("/beds/:id/status", async function(req, res) {
         SET status = $1, updated_by = $2, updated_at = $3, version = version + 1
         WHERE id = $4
         RETURNING *`,
-        [status, updatedBy ?? null, updated_at, req.params.id]
+        [status, updatedBy ?? null, updated_at, bedId]
     );
 
     return res.status(200).json(rows[0]);
