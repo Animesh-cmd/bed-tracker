@@ -1,6 +1,7 @@
 import express from "express"
 import pg from "pg"
 import { STATUS } from "./status.js";
+import { uuidFormat } from "./uuidFormat.js";
 const app = express();
 
 app.use(express.json());
@@ -13,9 +14,6 @@ const pool = new pg.Pool({
     database: "bedtracker",
     connectionTimeoutMillis: 3000
 });
-
-const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 
 async function main() {
     try {
@@ -76,13 +74,30 @@ app.get("/wards", async function (_req, res) {
 
 app.post("/wards/:wardId/beds", async function (req, res) {
     const { label } = req.body;
+    const { wardId } = req.params;
+
     if(!label) return res.status(400).json({
         error: "label is required"
     });
 
+    const labelExistAlready = await pool.query(
+        "SELECT * FROM beds WHERE label = $1", [label]
+    );
+
+    if(labelExistAlready)
+        return res.status(409).json({
+            error: `${label} already exists`
+        });
+
+    if (!uuidFormat.test(wardId)){
+        return res.status(400).json({
+        error: 'Invalid ward id'
+      });
+    }
+
     const { rows } = await pool.query(
         "INSERT INTO beds (ward_id, label) VALUES ($1, $2) RETURNING *",
-        [req.params.wardId, label]
+        [wardId, label]
     );
 
     res.status(201).json(rows[0]);
@@ -91,7 +106,7 @@ app.post("/wards/:wardId/beds", async function (req, res) {
 app.get("/wards/:wardId/beds", async function (req, res) {
     const { wardId } = req.params;
 
-    if (!uuidRegex.test(wardId)){
+    if (!uuidFormat.test(wardId)){
         return res.status(400).json({
         error: 'Invalid ward id'
       });
@@ -120,7 +135,7 @@ app.patch("/beds/:id/status", async function(req, res) {
     const { status, updatedBy} = req.body;
     const bedId = req.params.id;
     
-    if (!uuidRegex.test(bedId)){
+    if (!uuidFormat.test(bedId)){
         return res.status(400).json({
         error: 'Invalid input syntax bed id'
       });
